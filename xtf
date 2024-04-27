@@ -1,0 +1,132 @@
+#!/bin/bash
+export POSIXLY_CORRECT=yes.
+
+
+echo_help()
+{
+  echo "Usage: xtf [-h|--help] [FILTER] [COMMAND] USER LOG [LOG2 [...]]"
+  echo 
+  echo "[FILTER]"
+  echo " DATETIME -> YYYY-MM-DD HH:MM:SS "
+  echo " -a DATETIME -- only logs after DATETIME "
+  echo " -b DATETIME -- only logs before DATETIME"
+  echo " -c CURRENCY -- only logs with the CURRENCY"
+  echo
+  echo "[COMMAND]"
+  echo " list          -- output logs with the user"
+  echo " list-currency -- output sorted list with the currency"
+  echo " status        -- output real status of account sorted by currency"
+  echo " profit        -- output status of account with profit"
+  echo
+exit 0
+}
+
+
+COMMAND=""
+USERNAME=""
+LOG=""
+GZ_LOG=""
+AFTER_TIME=""
+BEFORE_TIME="9999-99-99  99:99:99"
+CURRENCY=""
+READ="cat"
+COMMAND_CNT=0
+
+
+if [ $# -eq 0 ] ; then
+  echo_help
+fi   
+
+while  [ $# -gt 0 ] ; do
+  case  $1 in
+    -h|--help)
+      echo_help
+      ;;
+    list-currency|list|status|profit)
+      COMMAND="$1"
+      COMMAND_CNT=$((COMMAND_CNT +1))
+      shift
+      ;;
+    -a)
+      AFTER_TIME="$2  $AFTER_TIME"
+      shift;shift
+      ;;
+    -b)
+      BEFORE_TIME="$2  $BEFORE_TIME"
+      shift;shift
+      ;;
+    -c)
+      CURRENCY="$2,$CURRENCY"
+      shift;shift
+      ;;
+    * )
+      case $1 in 
+        *.log) LOG="$LOG $1"
+          shift
+          ;;
+        *.gz) GZ_LOG="$GZ_LOG $1"
+          shift
+          ;;
+        *)
+          USERNAME="$1"
+          shift
+          ;;
+      esac   
+      ;;
+  esac
+done
+GZ_READ="gzip -d -c $GZ_LOG"
+
+if [ "$COMMAND_CNT" -gt 1 ];then
+  echo "TOO MANY COMMANDS"
+  exit; 
+fi
+if [ "$USERNAME" = "" ] ;then
+  echo "NO USERNAME"
+  exit 
+fi
+
+TIME_REGEX="[0-2][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9][[:space:]]+[0-2][0-9]:[0-5][0-9]:[0-5][0-9]"
+
+if ! [[ "$AFTER_TIME" =~ $TIME_REGEX  ||   "$AFTER_TIME" = ""   ]] ; then
+echo "Wrong date and time format"
+exit 
+ fi
+
+if ! [[ "$BEFORE_TIME" =~ $TIME_REGEX  ||   "$BEFORE_TIME" = "9999-99-99  99:99:99" ]] ; then
+echo "Wrong date and time format"
+exit 
+
+  fi
+
+READ="cat $LOG"
+  if ! [ "$GZ_LOG" = "" ] ;then
+    READ="$GZ_READ | cat $LOG -"
+  fi
+
+  if [ "$GZ_LOG" = "" ] && [ "$LOG" = "" ]; then
+    echo "No files found"
+    exit
+  fi
+
+    if [ "$XTF_PROFIT" = "" ]; then
+
+    XTF_PROFIT=20
+  fi
+
+
+  CURRENCY_FILTER='awk -F ";" -vcurrency="$CURRENCY"  '\''{ if(currency == ""){print $0} else {n = split(currency,arr,","); i =1; while(i<=n) {if($3 == arr[i]) {print $0 } i=i+1}}}'\'
+  FILLTER='awk -F";" -vafter="$AFTER_TIME" -vbefore="$BEFORE_TIME" '\''{if($2>after && $2<before ){print $0}}'\' 
+  STATUS=' awk -F ";" '\''{if(tmp == ""){tmp = $1; sum = $2; } else {if($1 == tmp){sum=sum+$2} else{printf("%s : %0.4f\n",tmp,sum);tmp=$1;sum=$2}}}END{printf("%s : %0.4f\n",tmp,sum)}'\'
+ 
+  CMD_PROFIT=' awk -F: -vprofit="$XTF_PROFIT" '\''{if($2 > 1){money = $2+($2*(profit*0.01));printf("%s: %0.4f\n",$1,money);}else {print $0}}'\'
+
+if [ "$COMMAND" = "" ]  || [ "$COMMAND" = "list"  ] ;  then
+eval "$READ" |eval "$FILLTER" |eval "$CURRENCY_FILTER" | grep "$USERNAME"
+elif [ "$COMMAND" = "list-currency" ] ; then
+  eval "$READ" | eval "$FILLTER" | eval "$CURRENCY_FILTER" | awk -F ';' -vuser="$USERNAME" '{if(user == $1){print $3}}' | sort -u
+elif [ "$COMMAND" = "status" ]; then
+  eval "$READ" |eval "$FILLTER" | eval "$CURRENCY_FILTER" |grep "$USERNAME"  |awk -F';' '{print $3";"$4}' |  sort -u | eval "$STATUS"
+  elif [ "$COMMAND" = "profit" ];then
+ eval "$READ" | eval "$FILLTER" | eval "$CURRENCY_FILTER" | grep "$USERNAME" | awk -F ';' '{print $3";"$4}' | sort -u |eval "$STATUS"|eval "$CMD_PROFIT"
+  fi
